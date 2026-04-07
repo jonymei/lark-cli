@@ -93,6 +93,28 @@ lark-cli auth login --recommend
 lark-cli calendar +agenda
 ```
 
+##### Private Deployment (e.g., xfchat.iflytek.com)
+
+For private Lark deployments, pass the Open API base URL as the `--brand` value:
+
+```bash
+# Interactive mode — enter the Open API URL when prompted for Brand
+lark-cli config init
+
+# Or non-interactive mode
+lark-cli config init \
+  --app-id "cli_xxx" \
+  --app-secret-stdin \
+  --brand "https://open.xfchat.iflytek.com" < app-secret.txt
+```
+
+The CLI automatically derives the Accounts and MCP endpoints from the provided URL:
+- Open API: `https://open.xfchat.iflytek.com`
+- Accounts: `https://accounts.xfchat.iflytek.com`
+- MCP: `https://mcp.xfchat.iflytek.com`
+
+If your deployment uses a different subdomain pattern (e.g., `https://xfchat.iflytek.com` without the `open.` prefix), the same URL will be used for all endpoints.
+
 ## Quick Start (AI Agent)
 
 > The following steps are for AI Agents. Some steps require the user to complete actions in a browser.

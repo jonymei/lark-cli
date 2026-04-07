@@ -93,6 +93,28 @@ lark-cli auth login --recommend
 lark-cli calendar +agenda
 ```
 
+##### 私有化部署（如 xfchat.iflytek.com）
+
+对于私有化部署的 Lark/飞书，将 Open API 基础 URL 作为 `--brand` 传入：
+
+```bash
+# 交互式 — 在 Brand 提示中输入 Open API URL
+lark-cli config init
+
+# 或非交互模式
+lark-cli config init \
+  --app-id "cli_xxx" \
+  --app-secret-stdin \
+  --brand "https://open.xfchat.iflytek.com" < app-secret.txt
+```
+
+CLI 会根据提供的 URL 自动推导出 Accounts 和 MCP 端点：
+- Open API: `https://open.xfchat.iflytek.com`
+- Accounts: `https://accounts.xfchat.iflytek.com`
+- MCP: `https://mcp.xfchat.iflytek.com`
+
+如果你的部署使用不同的子域名模式（例如 `https://xfchat.iflytek.com`，不带 `open.` 前缀），则该 URL 将被用于所有端点。
+
 ### 快速开始（AI Agent）
 
 > 以下步骤面向 AI Agent，部分步骤需要用户在浏览器中配合完成。
