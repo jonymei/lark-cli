@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -24,14 +26,16 @@ import (
 
 // LoginOptions holds all inputs for auth login.
 type LoginOptions struct {
-	Factory    *cmdutil.Factory
-	Ctx        context.Context
-	JSON       bool
-	Scope      string
-	Recommend  bool
-	Domains    []string
-	NoWait     bool
-	DeviceCode string
+	Factory     *cmdutil.Factory
+	Ctx         context.Context
+	JSON        bool
+	Scope       string
+	Recommend   bool
+	Domains     []string
+	NoWait      bool
+	DeviceCode  string
+	Flow        string // "device" or "code"
+	RedirectURI string // for authorization code flow
 }
 
 // NewCmdAuthLogin creates the auth login subcommand.
@@ -40,8 +44,12 @@ func NewCmdAuthLogin(f *cmdutil.Factory, runF func(*LoginOptions) error) *cobra.
 
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Device Flow authorization login",
-		Long: `Device Flow authorization login.
+		Short: "OAuth authorization login",
+		Long: `OAuth authorization login.
+
+Supports two flows:
+  --flow device (default): Device Flow for CLI environments
+  --flow code: Authorization Code Flow for private deployments
 
 For AI agents: this command blocks until the user completes authorization in the
 browser. Run it in the background and retrieve the verification URL from its output.`,
@@ -54,7 +62,7 @@ browser. Run it in the background and retrieve the verification URL from its out
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Scope, "scope", "", "scopes to request (space-separated)")
+	cmd.Flags().StringVar(&opts.Scope, "scope", "", "scopes to request (space-separated, or @file to read from file)")
 	cmd.Flags().BoolVar(&opts.Recommend, "recommend", false, "request only recommended (auto-approve) scopes")
 	available := sortedKnownDomains()
 	cmd.Flags().StringSliceVar(&opts.Domains, "domain", nil,
@@ -62,6 +70,9 @@ browser. Run it in the background and retrieve the verification URL from its out
 	cmd.Flags().BoolVar(&opts.JSON, "json", false, "structured JSON output")
 	cmd.Flags().BoolVar(&opts.NoWait, "no-wait", false, "initiate device authorization and return immediately; use --device-code to complete")
 	cmd.Flags().StringVar(&opts.DeviceCode, "device-code", "", "poll and complete authorization with a device code from a previous --no-wait call")
+	cmd.Flags().StringVar(&opts.Flow, "flow", "device", "OAuth flow type: device (default) or code")
+	cmd.Flags().StringVar(&opts.RedirectURI, "redirect-uri", "http://localhost:3000/callback", "redirect URI registered in the app console (for --flow code)")
+
 
 	_ = cmd.RegisterFlagCompletionFunc("domain", func(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeDomain(toComplete), cobra.ShellCompDirectiveNoFileComp
@@ -96,6 +107,16 @@ func authLoginRun(opts *LoginOptions) error {
 	config, err := f.Config()
 	if err != nil {
 		return err
+	}
+
+	// Validate flow type
+	if opts.Flow != "device" && opts.Flow != "code" {
+		return output.ErrValidation("invalid --flow value: %q, must be 'device' or 'code'", opts.Flow)
+	}
+
+	// --no-wait and --device-code only work with device flow
+	if (opts.NoWait || opts.DeviceCode != "") && opts.Flow != "device" {
+		return output.ErrValidation("--no-wait and --device-code only work with --flow device")
 	}
 
 	// Determine UI language from saved config
@@ -187,6 +208,17 @@ func authLoginRun(opts *LoginOptions) error {
 
 	finalScope := opts.Scope
 
+	// If scope starts with @, read from file
+	if strings.HasPrefix(finalScope, "@") {
+		filePath := strings.TrimPrefix(finalScope, "@")
+		scopes, err := readScopesFromFile(filePath)
+		if err != nil {
+			return output.ErrValidation("failed to read scopes from %s: %v", filePath, err)
+		}
+		finalScope = strings.Join(scopes, " ")
+		log("Loaded %d scopes from %s", len(scopes), filePath)
+	}
+
 	// Resolve scopes from domain/permission filters
 	if len(selectedDomains) > 0 || opts.Recommend {
 		if opts.Scope != "" {
@@ -213,47 +245,18 @@ func authLoginRun(opts *LoginOptions) error {
 		finalScope = strings.Join(candidateScopes, " ")
 	}
 
-	// Step 1: Request device authorization
 	httpClient, err := f.HttpClient()
 	if err != nil {
 		return err
 	}
-	authResp, err := larkauth.RequestDeviceAuthorization(httpClient, config.AppID, config.AppSecret, config.Brand, finalScope, f.IOStreams.ErrOut)
-	if err != nil {
-		return output.ErrAuth("device authorization failed: %v", err)
-	}
 
-	// --no-wait: return immediately with device code and URL
-	if opts.NoWait {
-		b, _ := json.Marshal(map[string]interface{}{
-			"verification_url": authResp.VerificationUriComplete,
-			"device_code":      authResp.DeviceCode,
-			"expires_in":       authResp.ExpiresIn,
-			"hint":             fmt.Sprintf("Show verification_url to user, then immediately execute: lark-cli auth login --device-code %s (blocks until authorized or timeout). Do not instruct the user to run this command themselves.", authResp.DeviceCode),
-		})
-		fmt.Fprintln(f.IOStreams.Out, string(b))
-		return nil
-	}
-
-	// Step 2: Show user code and verification URL
-	if opts.JSON {
-		b, _ := json.Marshal(map[string]interface{}{
-			"event":                     "device_authorization",
-			"verification_uri":          authResp.VerificationUri,
-			"verification_uri_complete": authResp.VerificationUriComplete,
-			"user_code":                 authResp.UserCode,
-			"expires_in":                authResp.ExpiresIn,
-		})
-		fmt.Fprintln(f.IOStreams.Out, string(b))
+	// Execute the selected OAuth flow
+	var result *larkauth.DeviceFlowResult
+	if opts.Flow == "code" {
+		result = executeAuthorizationCodeFlow(opts, config, finalScope, httpClient, log)
 	} else {
-		fmt.Fprintf(f.IOStreams.ErrOut, msg.OpenURL)
-		fmt.Fprintf(f.IOStreams.ErrOut, "  %s\n\n", authResp.VerificationUriComplete)
+		result = executeDeviceFlow(opts, config, finalScope, httpClient, msg, log)
 	}
-
-	// Step 3: Poll for token
-	log(msg.WaitingAuth)
-	result := larkauth.PollDeviceToken(opts.Ctx, httpClient, config.AppID, config.AppSecret, config.Brand,
-		authResp.DeviceCode, authResp.Interval, authResp.ExpiresIn, f.IOStreams.ErrOut)
 
 	if !result.OK {
 		if opts.JSON {
@@ -267,7 +270,7 @@ func authLoginRun(opts *LoginOptions) error {
 		return output.ErrAuth("authorization failed: %s", result.Message)
 	}
 
-	// Step 6: Get user info
+	// Get user info
 	log(msg.AuthSuccess)
 	sdk, err := f.LarkClient()
 	if err != nil {
@@ -278,7 +281,7 @@ func authLoginRun(opts *LoginOptions) error {
 		return output.ErrAuth("failed to get user info: %v", err)
 	}
 
-	// Step 7: Store token
+	// Store token
 	now := time.Now().UnixMilli()
 	storedToken := &larkauth.StoredUAToken{
 		UserOpenId:       openId,
@@ -294,7 +297,7 @@ func authLoginRun(opts *LoginOptions) error {
 		return output.Errorf(output.ExitInternal, "internal", "failed to save token: %v", err)
 	}
 
-	// Step 8: Update config — overwrite Users to single user, clean old tokens
+	// Update config
 	multi, _ := core.LoadMultiAppConfig()
 	if multi != nil && len(multi.Apps) > 0 {
 		app := &multi.Apps[0]
@@ -325,6 +328,84 @@ func authLoginRun(opts *LoginOptions) error {
 		}
 	}
 	return nil
+}
+
+// executeDeviceFlow executes the device flow.
+func executeDeviceFlow(
+	opts *LoginOptions,
+	config *core.CliConfig,
+	finalScope string,
+	httpClient *http.Client,
+	msg *loginMsg,
+	log func(string, ...interface{}),
+) *larkauth.DeviceFlowResult {
+	f := opts.Factory
+
+	// Step 1: Request device authorization
+	authResp, err := larkauth.RequestDeviceAuthorization(httpClient, config.AppID, config.AppSecret, config.Brand, finalScope, f.IOStreams.ErrOut)
+	if err != nil {
+		return &larkauth.DeviceFlowResult{OK: false, Error: "device_authorization_failed", Message: fmt.Sprintf("%v", err)}
+	}
+
+	// --no-wait: return immediately with device code and URL
+	if opts.NoWait {
+		b, _ := json.Marshal(map[string]interface{}{
+			"verification_url": authResp.VerificationUriComplete,
+			"device_code":      authResp.DeviceCode,
+			"expires_in":       authResp.ExpiresIn,
+			"hint":             fmt.Sprintf("Show verification_url to user, then immediately execute: lark-cli auth login --device-code %s (blocks until authorized or timeout). Do not instruct the user to run this command themselves.", authResp.DeviceCode),
+		})
+		fmt.Fprintln(f.IOStreams.Out, string(b))
+		return &larkauth.DeviceFlowResult{OK: false, Error: "no_wait", Message: "Device code returned"}
+	}
+
+	// Step 2: Show user code and verification URL
+	if opts.JSON {
+		b, _ := json.Marshal(map[string]interface{}{
+			"event":                     "device_authorization",
+			"verification_uri":          authResp.VerificationUri,
+			"verification_uri_complete": authResp.VerificationUriComplete,
+			"user_code":                 authResp.UserCode,
+			"expires_in":                authResp.ExpiresIn,
+		})
+		fmt.Fprintln(f.IOStreams.Out, string(b))
+	} else {
+		fmt.Fprintf(f.IOStreams.ErrOut, msg.OpenURL)
+		fmt.Fprintf(f.IOStreams.ErrOut, "  %s\n\n", authResp.VerificationUriComplete)
+	}
+
+	// Step 3: Poll for token
+	log(msg.WaitingAuth)
+	return larkauth.PollDeviceToken(opts.Ctx, httpClient, config.AppID, config.AppSecret, config.Brand,
+		authResp.DeviceCode, authResp.Interval, authResp.ExpiresIn, f.IOStreams.ErrOut)
+}
+
+// executeAuthorizationCodeFlow executes the authorization code flow.
+func executeAuthorizationCodeFlow(
+	opts *LoginOptions,
+	config *core.CliConfig,
+	finalScope string,
+	httpClient *http.Client,
+	log func(string, ...interface{}),
+) *larkauth.DeviceFlowResult {
+	result := larkauth.StartAuthorizationCodeFlow(
+		opts.Ctx,
+		httpClient,
+		config.AppID,
+		config.AppSecret,
+		config.Brand,
+		finalScope,
+		opts.RedirectURI,
+		opts.Factory.IOStreams.In,
+		opts.Factory.IOStreams.ErrOut,
+	)
+
+	return &larkauth.DeviceFlowResult{
+		OK:      result.OK,
+		Token:   result.Token,
+		Error:   result.Error,
+		Message: result.Message,
+	}
 }
 
 // authLoginPollDeviceCode resumes the device flow by polling with a device code
@@ -423,6 +504,26 @@ func collectScopesForDomains(domains []string, identity string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// readScopesFromFile reads scopes from a file, one per line, ignoring empty lines and comments.
+func readScopesFromFile(filePath string) ([]string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var scopes []string
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		scopes = append(scopes, line)
+	}
+	return scopes, nil
 }
 
 // allKnownDomains returns all valid domain names (from_meta projects + shortcut services).

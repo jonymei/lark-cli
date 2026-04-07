@@ -32,12 +32,13 @@ type AppUser struct {
 
 // AppConfig is a per-app configuration entry (stored format — secrets may be unresolved).
 type AppConfig struct {
-	AppId     string      `json:"appId"`
-	AppSecret SecretInput `json:"appSecret"`
-	Brand     LarkBrand   `json:"brand"`
-	Lang      string      `json:"lang,omitempty"`
-	DefaultAs string      `json:"defaultAs,omitempty"` // "user" | "bot" | "auto"
-	Users     []AppUser   `json:"users"`
+	AppId          string      `json:"appId"`
+	AppSecret      SecretInput `json:"appSecret"`
+	Brand          LarkBrand   `json:"brand"`
+	Lang           string      `json:"lang,omitempty"`
+	DefaultAs      string      `json:"defaultAs,omitempty"` // "user" | "bot" | "auto"
+	Users          []AppUser   `json:"users"`
+	SkipScopeCheck bool        `json:"skipScopeCheck,omitempty"` // Skip local scope prerequisite checks
 }
 
 // MultiAppConfig is the multi-app config file format.
@@ -47,12 +48,13 @@ type MultiAppConfig struct {
 
 // CliConfig is the resolved single-app config used by downstream code.
 type CliConfig struct {
-	AppID      string
-	AppSecret  string
-	Brand      LarkBrand
-	DefaultAs  string // "user" | "bot" | "auto" | "" (from config file)
-	UserOpenId string
-	UserName   string
+	AppID          string
+	AppSecret      string
+	Brand          LarkBrand
+	DefaultAs      string // "user" | "bot" | "auto" | "" (from config file)
+	UserOpenId     string
+	UserName       string
+	SkipScopeCheck bool // Skip local scope prerequisite checks
 }
 
 // GetConfigDir returns the config directory path.
@@ -116,10 +118,11 @@ func RequireConfig(kc keychain.KeychainAccess) (*CliConfig, error) {
 		return nil, &ConfigError{Code: 2, Type: "config", Message: err.Error()}
 	}
 	cfg := &CliConfig{
-		AppID:     app.AppId,
-		AppSecret: secret,
-		Brand:     app.Brand,
-		DefaultAs: app.DefaultAs,
+		AppID:          app.AppId,
+		AppSecret:      secret,
+		Brand:          app.Brand,
+		DefaultAs:      app.DefaultAs,
+		SkipScopeCheck: app.SkipScopeCheck,
 	}
 	if len(app.Users) > 0 {
 		cfg.UserOpenId = app.Users[0].UserOpenId

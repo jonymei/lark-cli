@@ -242,6 +242,9 @@ func serviceMethodRun(opts *ServiceMethodOptions) error {
 
 // checkServiceScopes pre-checks user scopes before making the API call.
 func checkServiceScopes(config *core.CliConfig, method map[string]interface{}, scopes []interface{}) error {
+	if config.SkipScopeCheck {
+		return nil
+	}
 	requiredScopes, hasRequired := method["requiredScopes"].([]interface{})
 
 	if hasRequired && len(requiredScopes) > 0 {

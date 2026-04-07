@@ -38,6 +38,60 @@ func TestResolveEndpoints_EmptyDefaultsToFeishu(t *testing.T) {
 	}
 }
 
+func TestResolveEndpoints_CustomURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		brand    LarkBrand
+		wantOpen string
+		wantAcct string
+		wantMCP  string
+	}{
+		{
+			name:     "private deployment with open subdomain",
+			brand:    "https://open.xfchat.iflytek.com",
+			wantOpen: "https://open.xfchat.iflytek.com",
+			wantAcct: "https://accounts.xfchat.iflytek.com",
+			wantMCP:  "https://mcp.xfchat.iflytek.com",
+		},
+		{
+			name:     "private deployment with open subdomain and trailing slash",
+			brand:    "https://open.xfchat.iflytek.com/",
+			wantOpen: "https://open.xfchat.iflytek.com",
+			wantAcct: "https://accounts.xfchat.iflytek.com",
+			wantMCP:  "https://mcp.xfchat.iflytek.com",
+		},
+		{
+			name:     "private deployment with http",
+			brand:    "http://open.example.com",
+			wantOpen: "http://open.example.com",
+			wantAcct: "http://accounts.example.com",
+			wantMCP:  "http://mcp.example.com",
+		},
+		{
+			name:     "private deployment without subdomain",
+			brand:    "https://lark.example.com",
+			wantOpen: "https://lark.example.com",
+			wantAcct: "https://lark.example.com",
+			wantMCP:  "https://lark.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ep := ResolveEndpoints(tt.brand)
+			if ep.Open != tt.wantOpen {
+				t.Errorf("Open = %q, want %q", ep.Open, tt.wantOpen)
+			}
+			if ep.Accounts != tt.wantAcct {
+				t.Errorf("Accounts = %q, want %q", ep.Accounts, tt.wantAcct)
+			}
+			if ep.MCP != tt.wantMCP {
+				t.Errorf("MCP = %q, want %q", ep.MCP, tt.wantMCP)
+			}
+		})
+	}
+}
+
 func TestResolveOpenBaseURL(t *testing.T) {
 	if got := ResolveOpenBaseURL(BrandFeishu); got != "https://open.feishu.cn" {
 		t.Errorf("ResolveOpenBaseURL(feishu) = %q", got)

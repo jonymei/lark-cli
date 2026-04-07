@@ -133,7 +133,9 @@ Shortcut 是对常用操作的高级封装（`lark-cli docs +<verb> [flags]`）�
 | Shortcut | 说明 |
 |----------|------|
 | [`+search`](references/lark-doc-search.md) | Search Lark docs, Wiki, and spreadsheet files (Search v2: doc_wiki/search) |
-| [`+create`](references/lark-doc-create.md) | Create a Lark document |
+| [`+create`](references/lark-doc-create.md) | Create a Lark document (MCP - may not work in private deployment) |
+| [`+create-text`](references/lark-doc-create-text.md) | Create a Lark document with plain text (OpenAPI - works in private deployment) |
+| [`+create-markdown`](references/lark-doc-create-markdown.md) | Create a Lark document from Markdown file (OpenAPI import - **RECOMMENDED** for private deployment) |
 | [`+fetch`](references/lark-doc-fetch.md) | Fetch Lark document content |
 | [`+update`](references/lark-doc-update.md) | Update a Lark document |
 | [`+media-insert`](references/lark-doc-media-insert.md) | Insert a local image or file at the end of a Lark document (4-step orchestration + auto-rollback) |

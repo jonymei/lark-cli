@@ -10,6 +10,8 @@ func Shortcuts() []common.Shortcut {
 	return []common.Shortcut{
 		DocsSearch,
 		DocsCreate,
+		DocsCreateText,
+		DocsCreateMarkdown,
 		DocsFetch,
 		DocsUpdate,
 		DocMediaInsert,

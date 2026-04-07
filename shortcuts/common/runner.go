@@ -578,6 +578,9 @@ func resolveShortcutIdentity(cmd *cobra.Command, f *cmdutil.Factory, s *Shortcut
 }
 
 func checkShortcutScopes(as core.Identity, config *core.CliConfig, scopes []string) error {
+	if config.SkipScopeCheck {
+		return nil
+	}
 	if as != core.AsUser || len(scopes) == 0 || config.UserOpenId == "" {
 		return nil
 	}
